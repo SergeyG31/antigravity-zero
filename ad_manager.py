@@ -91,12 +91,15 @@ class ArbManager:
                         del self.open_positions[token_symbol]
 
     async def execute_trade(self, symbol, side, price):
-        """Executes market orders on MEXC with Shadow Mode Guard."""
+        """Executes market orders on MEXC with Shadow Mode Guard and Telegram Alert."""
         import config
         from trading_intelligence import log_trade
+        from telegram_notifier import TelegramNotifier
         
+        notifier = TelegramNotifier()
         mode_prefix = "[LIVE-FOR-REAL]" if not config.SHADOW_MODE else "[SHADOW-MODE]"
-        print(f"🚀 {mode_prefix} EXECUTION: {side} {symbol} @ {price}")
+        msg = f"🚀 {mode_prefix} EXECUTION: {side} {symbol} @ {price}"
+        print(msg)
         
         # Log to history for StrategyLearner
         log_trade({
@@ -106,6 +109,9 @@ class ArbManager:
             "price": price,
             "shadow": config.SHADOW_MODE
         })
+
+        # Send Telegram Notification for Execution
+        notifier.send_message(msg)
 
         if config.SHADOW_MODE:
             print(f"🛡️  Shadow Mode Active: Trade bypassed.")

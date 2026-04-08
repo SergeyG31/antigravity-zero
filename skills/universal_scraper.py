@@ -14,20 +14,52 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0"
 ]
 
+import json
+import os
+
 class UniversalScraper:
     """
-    יכולת סריקה אוניברסלית עמידה בפני חסימות (Anti-429).
+    יכולת סריקה אוניברסלית עמידה בפני חסימות (Anti-429) עם Persistent Caching.
     """
-    def __init__(self):
+    def __init__(self, cache_file="scraper_cache.json"):
         self.retry_delay = 5 # Initial retry delay in seconds
+        self.cache_file = cache_file
+        self.cache_ttl = 60 # Time-to-Live in seconds
+        self.cache = self._load_cache()
         
+    def _load_cache(self):
+        """Loads cache from JSON file on restart."""
+        if os.path.exists(self.cache_file):
+            try:
+                with open(self.cache_file, 'r') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def _save_cache(self):
+        """Persists cache to JSON file."""
+        try:
+            with open(self.cache_file, 'w') as f:
+                json.dump(self.cache, f, indent=4)
+        except Exception as e:
+            logging.error(f"Failed to save cache: {e}")
+
     def _get_headers(self):
         return {"User-Agent": random.choice(USER_AGENTS)}
 
     def fetch_stock(self, ticker):
         """
-        Fetches stock price with Exponential Backoff and Random Jitter.
+        Fetches stock price with Persistent Caching, Exponential Backoff and Random Jitter.
         """
+        # 0. Check Cache First
+        now = time.time()
+        if ticker in self.cache:
+            price, timestamp = self.cache[ticker]
+            if now - timestamp < self.cache_ttl:
+                print(f"⚡ [PERSISTENT CACHE HIT] {ticker}: ${price} (Age: {round(now - timestamp, 1)}s)")
+                return price
+
         max_retries = 3
         current_attempt = 0
         backoff = self.retry_delay
@@ -41,12 +73,15 @@ class UniversalScraper:
                 # 2. Setup Ticker with rotated headers (yfinance uses requests internally)
                 data = yf.Ticker(ticker)
                 
-                # Try fetching via history first (often bypasses some 'info' limits)
                 hist = data.history(period='1d')
+                val = 0.0
                 if not hist.empty:
-                    val = hist['Close'].iloc[-1]
-                    logging.info(f"✅ [Scraper] {ticker} Price: ${val} (Attempt {current_attempt + 1})")
-                    return val
+                    val = round(hist['Close'].iloc[-1], 2)
+                
+                self.cache[ticker] = (val, time.time())
+                self._save_cache()
+                logging.info(f"✅ [Scraper] {ticker} Price: ${val} (Attempt {current_attempt + 1})")
+                return val
                 
                 # Fallback to alternative sources if Yahoo is empty
                 return self.fetch_alternative_source(ticker)
@@ -82,6 +117,8 @@ class UniversalScraper:
                 prices = re.findall(r'\d+\.\d+\s+USD', text)
                 if prices:
                     price_val = float(prices[0].split()[0])
+                    self.cache[ticker] = (price_val, time.time())
+                    self._save_cache()
                     return price_val
             return 0.0
         except Exception as e:

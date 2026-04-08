@@ -25,6 +25,11 @@ async def run_mission():
     
     ag_os.log_event("DATA", f"MSFT: ${msft_price} | TSLA: ${tsla_price}")
     
+    # Repeat fetch to demonstrate caching
+    ag_os.log_event("SCRAPER", "Repeat fetch for MSFT (Testing Cache)...")
+    msft_price_cached = scraper.fetch_stock("MSFT")
+    ag_os.log_event("DATA", f"MSFT (Cached): ${msft_price_cached}")
+    
     # 3. Simulate news gathering
     news_sample = scraper.fetch_web_content("https://finance.yahoo.com/quote/MSFT")
     ag_os.log_event("SCRAPER", f"Gathered {len(news_sample)} chars of news content.")
