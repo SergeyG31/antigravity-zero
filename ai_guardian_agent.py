@@ -13,8 +13,8 @@ import os
 class AIGuardianAgent:
     def __init__(self):
         genai.configure(api_key=GEMINI_API_KEY)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
-        self.vision_model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        self.vision_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     def automate_chat_response(self, customer_name, chat_history):
         """Unified Chat Automation: Replies to customers and sends payment details."""

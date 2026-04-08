@@ -22,7 +22,7 @@ class MarketIntelligenceHub:
         gemini_key = os.getenv('GEMINI_API_KEY')
         if gemini_key:
             genai.configure(api_key=gemini_key)
-            self.ai_model = genai.GenerativeModel('gemini-1.5-flash')
+            self.ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
         else:
             self.ai_model = None
 
@@ -78,7 +78,10 @@ class MarketIntelligenceHub:
         if not self.ai_model or not text_content: return "NEUTRAL", 0
         
         try:
-            with open("/Users/sergeygalayev/Desktop/LiorBot_Improved/bullish_keywords.md", "r", encoding="utf-8") as f:
+            # Use relative path for portability
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            keywords_path = os.path.join(base_dir, "bullish_keywords.md")
+            with open(keywords_path, "r", encoding="utf-8") as f:
                 sentiment_dict = f.read()
         except Exception:
             sentiment_dict = "(Dictionary file not found)"

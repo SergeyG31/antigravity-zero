@@ -3,6 +3,7 @@ import pandas as pd
 import time
 from auth_manager import AuthManager
 from config import ASSET_PAIRS, EXCHANGES
+from skills.universal_scraper import scraper # Using the Anti-429 Scraper
 
 class ScraperEngine:
     def __init__(self, auth_mgr: AuthManager):
@@ -25,15 +26,11 @@ class ScraperEngine:
             return 0.0, 0.0
 
     async def fetch_real_stock_price(self, ticker_symbol):
-        """Fetches live stock price robustly."""
+        """Fetches live stock price robustly using the Anti-429 Universal Scraper."""
         try:
-            import yfinance as yf
-            stock = yf.Ticker(ticker_symbol)
-            # Use history for more stability than fast_info
-            data = stock.history(period='1d', interval='1m')
-            if not data.empty:
-                return data['Close'].iloc[-1]
-            return 0.0
+            # The UniversalScraper already handles retries, UA rotation, and jitter
+            price = scraper.fetch_stock(ticker_symbol)
+            return price
         except Exception:
             return 0.0
 
@@ -70,3 +67,20 @@ class ScraperEngine:
 
     async def wrap_scan(self, ex, symbol):
         return await self.scan_market(ex, symbol)
+
+    def calculate_spread_matrix(self):
+        """Builds a comparison matrix for the dashboard UI."""
+        if not self.price_hub: return pd.DataFrame()
+        
+        matrix = []
+        for symbol, exs in self.price_hub.items():
+            for ex_name, prices in exs.items():
+                matrix.append({
+                    "Symbol": symbol,
+                    "Exchange": ex_name.upper(),
+                    "Bid (Buy)": prices['buy'],
+                    "Ask (Sell)": prices['sell'],
+                    "Spread %": round(((prices['sell'] - prices['buy']) / prices['buy'] * 100), 2) if prices['buy'] > 0 else 0
+                })
+        return pd.DataFrame(matrix)
+

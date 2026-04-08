@@ -13,7 +13,7 @@ async def run_diagnostic():
     if gemini_key:
         try:
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-3-flash-preview')
             response = model.generate_content("Health check: Reply with 'OK'")
             print(f"✅ [GEMINI AI] Connected. Response: {response.text.strip()}")
         except Exception as e:

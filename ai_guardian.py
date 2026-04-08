@@ -7,7 +7,7 @@ class AIGuardian:
     def __init__(self):
         genai.configure(api_key=GEMINI_API_KEY)
         # Using Gemini 1.5 Flash for speed and cost-efficiency
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
         self.vision_level = os.getenv('AI_VISION_LEVEL', 'STRICT')
 
     def analyze_chat(self, chat_history):

@@ -16,6 +16,7 @@ USER_AGENTS = [
 
 import json
 import os
+from yahooquery import Ticker as YQTicker # Alternative engine
 
 class UniversalScraper:
     """
@@ -73,17 +74,28 @@ class UniversalScraper:
                 # 2. Setup Ticker with rotated headers (yfinance uses requests internally)
                 data = yf.Ticker(ticker)
                 
+                # Try fetching via history first (often bypasses some 'info' limits)
                 hist = data.history(period='1d')
                 val = 0.0
                 if not hist.empty:
                     val = round(hist['Close'].iloc[-1], 2)
+                    self.cache[ticker] = (val, time.time())
+                    self._save_cache()
+                    logging.info(f"✅ [Scraper-YF] {ticker} Price: ${val}")
+                    return val
                 
-                self.cache[ticker] = (val, time.time())
-                self._save_cache()
-                logging.info(f"✅ [Scraper] {ticker} Price: ${val} (Attempt {current_attempt + 1})")
-                return val
-                
-                # Fallback to alternative sources if Yahoo is empty
+                # 3. Fallback to YahooQuery (Different API endpoint)
+                logging.info(f"🔄 [Fallback] Trying YahooQuery for {ticker}...")
+                yq = YQTicker(ticker)
+                price_data = yq.price
+                if ticker in price_data and 'regularMarketPrice' in price_data[ticker]:
+                    val = round(price_data[ticker]['regularMarketPrice'], 2)
+                    self.cache[ticker] = (val, time.time())
+                    self._save_cache()
+                    logging.info(f"✅ [Scraper-YQ] {ticker} Price: ${val}")
+                    return val
+
+                # 4. Fallback to Google Search Scraping
                 return self.fetch_alternative_source(ticker)
 
             except Exception as e:
@@ -109,16 +121,15 @@ class UniversalScraper:
             
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                # Google Search result often contains price in a specific div
-                # This is a simplified fallback and might need CSS selector updates
-                # For MSFT, it might find "425.22 USD"
                 text = soup.get_text()
+                # Search for patterns like 425.22 USD or 1,234.56 USD
                 import re
-                prices = re.findall(r'\d+\.\d+\s+USD', text)
+                prices = re.findall(r'(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s+(?:USD|ILS)', text)
                 if prices:
-                    price_val = float(prices[0].split()[0])
+                    price_val = float(prices[0].replace(',', ''))
                     self.cache[ticker] = (price_val, time.time())
                     self._save_cache()
+                    logging.info(f"✅ [Scraper-G] {ticker} Price: ${price_val}")
                     return price_val
             return 0.0
         except Exception as e:

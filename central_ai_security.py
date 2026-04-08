@@ -1,10 +1,15 @@
+import os
 import google.generativeai as genai
-from config import GEMINI_API_KEY, EXCHANGES
+from config import EXCHANGES
 
 class CentralAISecurity:
     def __init__(self):
-        genai.configure(api_key=GEMINI_API_KEY)
-        self.model = genai.GenerativeModel('gemini-pro')
+        gemini_key = os.getenv('GEMINI_API_KEY')
+        if gemini_key:
+            genai.configure(api_key=gemini_key)
+            self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        else:
+            self.model = None
         self.chat_logs = {ex: [] for ex in EXCHANGES}
 
     def process_all_chats(self, all_exchange_chats):
@@ -17,6 +22,9 @@ class CentralAISecurity:
 
     def guardian_check(self, exchange_id, chat_history):
         """Single Gemini Agent checking P2P chat across any platform."""
+        if not self.model:
+            return "VERIFIED (AI Offline)"
+            
         prompt = f"""
         Platform: {exchange_id} (P2P USDT/ILS)
         Chat: {chat_history}

@@ -63,6 +63,10 @@ class MexcStockOrchestrator:
         print(f"🏛️ MEXC STOCK SPECIALIST: ACTIVATED.")
         print(f"Tracking: {', '.join(STOCK_PAIRS.values())}")
         
+        from telegram_notifier import TelegramNotifier
+        notifier = TelegramNotifier()
+        notifier.send_message(f"🚀 *MEXC Stock Specialist*: ONLINE.\nTracking {len(STOCK_PAIRS)} stock assets.")
+
         self.launch_dashboard()
         
         try:

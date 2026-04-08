@@ -121,3 +121,7 @@ class ArbManager:
         # await self.exchanges['mexc'].create_market_order(symbol, side, MAX_TRADE_SIZE)
         return True
 
+# Alias for compatibility with dashboard_hud.py
+AdManager = ArbManager
+
+

@@ -58,6 +58,11 @@ class MultiHubOrchestrator:
     async def start(self):
         # Concurrently run all three central layers
         print("🏛️ Starting P2P Sovereign Aggregator v2.0...")
+        
+        from telegram_notifier import TelegramNotifier
+        notifier = TelegramNotifier()
+        notifier.send_message("🚀 *Antigravity P2P OS*: ACTIVATED. Scanning Multi-Hub Market...")
+
         await asyncio.gather(
             self.run_aggregated_execution(),
             self.run_central_security(),
