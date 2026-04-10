@@ -1,94 +1,78 @@
 import asyncio
 import time
-from config import STOCK_PAIRS, MIN_LAG_THRESHOLD, EXIT_PROFIT_TARGET, MAX_TRADE_SIZE
+from config import CRYPTO_PAIRS, MOMENTUM_THRESHOLD, EXIT_PROFIT_TARGET, MAX_TRADE_SIZE, TARGET_EXCHANGE, MEXC_TAKER_FEE
 from intelligence_hub import MarketIntelligenceHub
 
 class ArbManager:
     def __init__(self, auth_mgr):
         self.auth_mgr = auth_mgr
         self.exchanges = self.auth_mgr.get_all_exchanges()
-        self.target_exchange = 'mexc'
-        self.open_positions = {} # Tracks {symbol: entry_price}
+        self.open_positions = {}   # Tracks {symbol: entry_price}
+        self.price_history = {}    # Tracks {symbol: previous_price}
         self.intel_hub = MarketIntelligenceHub() # AI Intelligence engine
 
-    def calculate_net_profit(self, entry_price, current_price, taker_fee=0.001):
-        """Calculates true NET profit after double Exchange Taker fees (Entry + Exit)."""
-        # 0.1% fee on MEXC for market takers
+    def calculate_net_profit(self, entry_price, current_price):
+        """Calculates true NET profit after double Exchange Taker fees."""
         gross_profit = (current_price - entry_price) / entry_price
-        net_profit = gross_profit - (taker_fee * 2) 
+        net_profit = gross_profit - (MEXC_TAKER_FEE * 2) 
         return net_profit
 
     async def check_liquidity(self, symbol, required_usd_size):
-        """Checks MEXC order book depth to prevent severe slippage."""
+        """Checks MEXC order book depth."""
         try:
-            mexc = self.exchanges.get('mexc')
-            if not mexc: return True # Fallback if mock
-            
-            # Fetch order book with tight depth
+            mexc = self.exchanges.get(TARGET_EXCHANGE)
             order_book = await mexc.fetch_order_book(symbol, limit=5)
             best_ask_price, best_ask_amount = order_book['asks'][0]
-            
-            available_usd_at_best_price = best_ask_price * best_ask_amount
-            
-            if available_usd_at_best_price >= required_usd_size:
-                print(f"🌊 [Liquidity OK] {symbol}: ${round(available_usd_at_best_price, 2)} available @ {best_ask_price}.")
+            if (best_ask_price * best_ask_amount) >= required_usd_size:
                 return True
-            else:
-                print(f"⚠️ [Liquidity WARN] {symbol}: Only ${round(available_usd_at_best_price, 2)} available! Halting trade.")
-                return False
-        except Exception as e:
-            print(f"[Liquidity Scanner] Network/Book error: {e}")
+            return False
+        except Exception:
             return False
 
-    async def run_stock_lag_logic(self, crypto_price_hub, real_stock_hub):
-        """MEXC Specialist: Entry and Exit logic based on Wall Street Lag & AI Sentiment."""
-        for token_symbol, real_ticker in STOCK_PAIRS.items():
-            real_price = real_stock_hub.get(token_symbol, 0.0)
-            token_price = crypto_price_hub.get(token_symbol, {}).get(self.target_exchange, {}).get('sell', 0.0)
+    async def run_crypto_smart_logic(self, price_hub):
+        """Smart Crypto (MEXC ONLY): Momentum + Sentiment Logic."""
+        from config import MAX_CONCURRENT_TRADES, MIN_AI_SCORE
+        
+        for symbol in CRYPTO_PAIRS:
+            current_price = price_hub.get(symbol, {}).get(TARGET_EXCHANGE, {}).get('sell', 0.0)
+            if current_price == 0: continue
             
-            if real_price == 0 or token_price == 0: continue
-            
-            # --- 1. ENTRY LOGIC ---
-            if token_symbol not in self.open_positions:
-                lag_deviation = (real_price - token_price) / token_price
+            # --- 1. ENTRY LOGIC: Momentum + AI Confidence ---
+            if symbol not in self.open_positions:
+                if len(self.open_positions) >= MAX_CONCURRENT_TRADES: continue
                 
-                if lag_deviation >= MIN_LAG_THRESHOLD:
-                    print(f"🎯 [MEXC ENTRY DETECTED] {real_ticker} Lag: {round(lag_deviation*100, 3)}%")
+                prev_price = self.price_history.get(symbol, 0.0)
+                self.price_history[symbol] = current_price # Update history
+                
+                if prev_price > 0:
+                    momentum = (current_price - prev_price) / prev_price
                     
-                    # AI SENTIMENT CHECK (The Game Changer)
-                    signal, score = await self.intel_hub.run_full_scan(real_ticker)
-                    
-                    if signal == "BULLISH" and score >= 6:
-                        print(f"✅ AI APPROVED [{score}/10]: Strong Bullish Sentiment. Verifying L1 Liquidity...")
+                    # If price is moving up, verify with AI
+                    if momentum >= MOMENTUM_THRESHOLD:
+                        print(f"📈 [HYPER] {symbol} Up {round(momentum*100, 3)}%. Verifying...")
                         
-                        has_liquidity = await self.check_liquidity(token_symbol, MAX_TRADE_SIZE)
-                        if has_liquidity:
-                            success = await self.execute_trade(token_symbol, 'BUY', token_price)
-                            if success:
-                                self.open_positions[token_symbol] = token_price # Safe entry recorded
+                        base_ticker = symbol.split('/')[0]
+                        signal, score = await self.intel_hub.run_full_scan(base_ticker)
                         
-                    elif signal == "NO_DATA":
-                        print(f"⚠️ Network offline or no news. Verifying L1 Liquidity...")
-                        has_liquidity = await self.check_liquidity(token_symbol, MAX_TRADE_SIZE)
-                        if has_liquidity:
-                            success = await self.execute_trade(token_symbol, 'BUY', token_price)
-                            if success:
-                                self.open_positions[token_symbol] = token_price
-                    else:
-                        print(f"🛑 AI REJECTED [{signal} {score}/10]: Bad news in the market. Aborting trade.")
+                        if signal == "BULLISH" and score >= MIN_AI_SCORE:
+                            if await self.check_liquidity(symbol, MAX_TRADE_SIZE):
+                                success = await self.execute_trade(symbol, 'BUY', current_price)
+                                if success:
+                                    self.open_positions[symbol] = current_price
             
             # --- 2. EXIT LOGIC ---
             else:
-                entry_price = self.open_positions[token_symbol]
-                # Use strictly the NET PROFIT calculator
-                net_profit = self.calculate_net_profit(entry_price, token_price)
+                entry_price = self.open_positions[symbol]
+                current_bid = price_hub.get(symbol, {}).get(TARGET_EXCHANGE, {}).get('buy', 0.0)
+                if current_bid == 0: continue
                 
-                # Exit if target NET profit reached
+                net_profit = self.calculate_net_profit(entry_price, current_bid)
+                
                 if net_profit >= EXIT_PROFIT_TARGET:
-                    print(f"💰 [MEXC EXIT] Closing {token_symbol} | NET Profit after fees: {round(net_profit*100, 2)}%")
-                    success = await self.execute_trade(token_symbol, 'SELL', token_price)
+                    print(f"💰 [MEXC PROFIT] Closing {symbol} | Net: {round(net_profit*100, 2)}%")
+                    success = await self.execute_trade(symbol, 'SELL', current_bid)
                     if success:
-                        del self.open_positions[token_symbol]
+                        del self.open_positions[symbol]
 
     async def execute_trade(self, symbol, side, price):
         """Executes market orders on MEXC with Shadow Mode Guard and Telegram Alert."""
@@ -118,8 +102,24 @@ class ArbManager:
             return True
 
         # In Live, we call the CCXT create_order here
-        # await self.exchanges['mexc'].create_market_order(symbol, side, MAX_TRADE_SIZE)
-        return True
+        try:
+            mexc = self.exchanges['mexc']
+            token_amount = config.MAX_TRADE_SIZE / price
+            
+            if side.upper() == 'BUY':
+                print(f"💰 Executing Live BUY: {token_amount} {symbol} @ {price}")
+                # For some exchanges, market buy takes 'cost' (USDT), for some 'amount' (Tokens).
+                # CCXT usually handles this if we use create_market_buy_order
+                await mexc.create_market_buy_order(symbol, config.MAX_TRADE_SIZE)
+            else:
+                print(f"💰 Executing Live SELL: {token_amount} {symbol} @ {price}")
+                await mexc.create_market_sell_order(symbol, token_amount)
+                
+            return True
+        except Exception as e:
+            print(f"❌ EXECUTION FAILED: {e}")
+            notifier.send_message(f"❌ *TRADE FAILURE*: {symbol} {side} - {e}")
+            return False
 
 # Alias for compatibility with dashboard_hud.py
 AdManager = ArbManager

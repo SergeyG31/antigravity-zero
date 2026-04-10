@@ -2,15 +2,14 @@ import asyncio
 import pandas as pd
 import time
 from auth_manager import AuthManager
-from config import ASSET_PAIRS, EXCHANGES
-from skills.universal_scraper import scraper # Using the Anti-429 Scraper
+from config import CRYPTO_PAIRS, EXCHANGES
 
 class ScraperEngine:
     def __init__(self, auth_mgr: AuthManager):
         self.auth_mgr = auth_mgr
         self.exchanges = self.auth_mgr.get_all_exchanges()
         # price_hub structure: {symbol: {exchange: {'buy': bid, 'sell': ask}}}
-        self.price_hub = {symbol: {ex: {'buy': 0.0, 'sell': 0.0} for ex in EXCHANGES} for symbol in ASSET_PAIRS}
+        self.price_hub = {symbol: {ex: {'buy': 0.0, 'sell': 0.0} for ex in EXCHANGES} for symbol in CRYPTO_PAIRS}
 
     async def scan_market(self, exchange_id, symbol):
         """Fetches live spot order book for a specific symbol."""
@@ -18,6 +17,7 @@ class ScraperEngine:
         if not exchange: return 0.0, 0.0
         
         try:
+            # High speed fetch
             orderbook = await exchange.fetch_order_book(symbol, 5)
             bid = orderbook['bids'][0][0] if orderbook['bids'] else 0.0
             ask = orderbook['asks'][0][0] if orderbook['asks'] else 0.0
@@ -25,44 +25,24 @@ class ScraperEngine:
         except Exception:
             return 0.0, 0.0
 
-    async def fetch_real_stock_price(self, ticker_symbol):
-        """Fetches live stock price robustly using the Anti-429 Universal Scraper."""
-        try:
-            # The UniversalScraper already handles retries, UA rotation, and jitter
-            price = scraper.fetch_stock(ticker_symbol)
-            return price
-        except Exception:
-            return 0.0
-
-
     async def refresh_all_prices(self):
-        """Monitors both Crypto Spreads and Real-World Stock Lags."""
-        # 1. Crypto Scan
+        """Monitors Crypto prices across Binance and MEXC."""
         tasks = []
-        for symbol in ASSET_PAIRS:
+        for symbol in CRYPTO_PAIRS:
             for ex in EXCHANGES:
                 tasks.append(self.wrap_scan(ex, symbol))
         
-        # 2. Add Stock Scan (Real Market)
-        from config import STOCK_PAIRS
-        stock_tasks = [self.fetch_real_stock_price(target) for target in STOCK_PAIRS.values()]
+        results = await asyncio.gather(*tasks)
         
-        results = await asyncio.gather(*(tasks + stock_tasks))
-        
-        # Process Crypto
+        # Process results into hub
         idx = 0
-        for symbol in ASSET_PAIRS:
+        for symbol in CRYPTO_PAIRS:
             for ex in EXCHANGES:
                 self.price_hub[symbol][ex]['buy'] = results[idx][0]
                 self.price_hub[symbol][ex]['sell'] = results[idx][1]
                 idx += 1
         
-        # Process Real Stocks into a new hub
-        self.stock_hub = {}
-        for i, token_symbol in enumerate(STOCK_PAIRS.keys()):
-            self.stock_hub[token_symbol] = results[idx + i]
-        
-        return self.price_hub, self.stock_hub
+        return self.price_hub
 
 
     async def wrap_scan(self, ex, symbol):

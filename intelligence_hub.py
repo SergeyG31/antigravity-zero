@@ -1,20 +1,11 @@
 import warnings
-warnings.filterwarnings("ignore") # Suppress Gemini deprecation warnings
+warnings.filterwarnings("ignore") 
 
 import asyncio
 import os
 import google.generativeai as genai
-from finvizfinance.screener.overview import Overview
-from newspaper import Article
 import random
-from config import STOCK_PAIRS
-import yfinance as yf
-
-try:
-    from ntscraper import Nitter
-    NTSCRAPER_AVAILABLE = True
-except ImportError:
-    NTSCRAPER_AVAILABLE = False
+from config import CRYPTO_PAIRS
 
 class MarketIntelligenceHub:
     def __init__(self):
@@ -26,81 +17,63 @@ class MarketIntelligenceHub:
         else:
             self.ai_model = None
 
-    async def get_finviz_top_gainers(self):
-        """Uses finvizfinance to find stocks moving fast right now."""
-        try:
-            foverview = Overview()
-            filters_dict = {'Signal': 'Top Gainers', 'Volume': 'Over 1 Million'}
-            foverview.set_filter(filters_dict=filters_dict)
-            df = foverview.screener_view()
-            
-            target_tickers = list(STOCK_PAIRS.values())
-            matches = df[df['Ticker'].isin(target_tickers)]
-            
-            if not matches.empty:
-                print(f"📈 [FINVIZ] Found {len(matches)} of our tokens in Top Gainers!")
-                return matches['Ticker'].tolist()
-            return []
-        except Exception as e:
-            print(f"[FINVIZ] Engine error: {e}")
-            return []
-
     async def fetch_latest_news(self, ticker_symbol):
-        """Uses yfinance to fetch news URLs for a ticker reliably."""
+        """Fetches top crypto news for AI analysis."""
+        import requests
         try:
-            stock = yf.Ticker(ticker_symbol)
-            news_items = stock.news
+            # Fetch all top news (more stable than filtering by category)
+            url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
+            response = requests.get(url, timeout=10)
             
-            urls = []
-            if isinstance(news_items, list):
-                for item in news_items[:3]: # Top 3 recent articles
-                    link = item.get('link')
-                    if link: urls.append(link)
-            return urls
+            if response.status_code == 200:
+                json_data = response.json()
+                news_list = json_data.get('Data', [])
+                
+                # Double check that we received a list
+                if not isinstance(news_list, list):
+                    return ""
+                
+                combined_news = ""
+                # Take top 10 news items to give the AI context of the whole market
+                for item in news_list[:10]:
+                    title = item.get('title', '')
+                    body = item.get('body', '')
+                    combined_news += f"Title: {title}\nSummary: {body}\n\n"
+                return combined_news
+            return ""
         except Exception as e:
-            print(f"[News Scraper] Error fetching news for {ticker_symbol}: {e}")
-            return []
-
-
-    async def scrape_article_text(self, url):
-        """Uses newspaper3k to extract text from a news URL."""
-        try:
-            article = Article(url)
-            article.download()
-            article.parse()
-            return article.text[:2000] # Return top 2000 chars for AI context
-        except Exception as e:
-            # print(f"[Scraper] Failed to read {url}")
+            print(f"[Crypto News API] Network Error: {e}")
             return ""
 
     async def analyze_sentiment(self, ticker, text_content):
-        """Uses Gemini AI to assess if the news indicates a strong BUY."""
+        """Uses Gemini AI with the Crypto dictionary to assess Market Alpha."""
         if not self.ai_model or not text_content: return "NEUTRAL", 0
         
         try:
-            # Use relative path for portability
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            keywords_path = os.path.join(base_dir, "bullish_keywords.md")
+            keywords_path = os.path.join(base_dir, "crypto_dictionary.md")
             with open(keywords_path, "r", encoding="utf-8") as f:
                 sentiment_dict = f.read()
         except Exception:
-            sentiment_dict = "(Dictionary file not found)"
+            sentiment_dict = "(Crypto Dictionary not found)"
 
         prompt = f"""
-        You are an elite high-frequency trading analyst. 
-        Read the following recent news for stock '{ticker}':
+        You are a Master Crypto Quant Trader.
+        Analyze the following news and social media sentiment for '{ticker}':
         
         {text_content}
         
         ---
-        Use the following Bullish Sentiment Dictionary to guide your analysis:
+        GUIDE DICTIONARY:
         {sentiment_dict}
         ---
         
-        Based ONLY on the news text and how it matches the concepts in the dictionary, assess the market sentiment.
-        Reply strictly in this format:
+        Assess if there is a breakout opportunity. 
+        Focus on 'Smart Money' signs vs 'Retail FOMO'.
+        Output Format:
         SIGNAL: [BULLISH / BEARISH / NEUTRAL]
         SCORE: [1 to 10]
+        RATIONALE: (One sentence)
         """
         
         try:
@@ -108,71 +81,36 @@ class MarketIntelligenceHub:
             result = response.text.upper()
             
             signal = "NEUTRAL"
-            score = 0
-            
             if "BULLISH" in result: signal = "BULLISH"
             elif "BEARISH" in result: signal = "BEARISH"
             
-            # Simple grab of the score digit
             import re
             numbers = re.findall(r'\d+', result)
-            if numbers: score = int(numbers[-1])
+            score = int(numbers[0]) if numbers else 0
             
             return signal, score
         except Exception as e:
-            print(f"[AI Scanner] Error: {e}")
+            print(f"[AI Crypto Scanner] Error: {e}")
             return "NEUTRAL", 0
 
-    async def scrape_twitter_sentiment(self, ticker):
-        """Uses ntscraper to silently pull current X (Twitter) sentiment without API keys."""
-        if not NTSCRAPER_AVAILABLE:
-            return ""
-        try:
-            print(f"🐦 [Twitter] Scraping latest mentions for {ticker}...")
-            scraper = Nitter(log_level=1, skip_instance_check=False)
-            # Find 5 recent tweets discussing the stock
-            tweets = scraper.get_tweets(f"${ticker}", mode='term', number=5)
-            
-            tweet_text = ""
-            if tweets and 'tweets' in tweets:
-                for t in tweets['tweets']:
-                    tweet_text += t.get('text', '') + "\n"
-            return tweet_text
-        except Exception as e:
-            print(f"[Twitter Scraper] Error: {e}")
-            return ""
-
     async def run_full_scan(self, ticker):
-        """Executes the full Pipeline: News -> Scrape -> AI Analysis."""
-        print(f"🔎 Running Deep Recon on {ticker}...")
-        urls = await self.fetch_latest_news(ticker)
+        """Executes the full Pipeline: News -> AI Analysis."""
+        print(f"🔎 Running Deep Crypto Recon on {ticker}...")
+        combined_text = await self.fetch_latest_news(ticker)
         
-        if not urls:
+        if not combined_text:
             return "NO_DATA", 0
 
-        combined_text = ""
-        
-        # 1. Fetch News
-        for url in urls:
-            text = await self.scrape_article_text(url)
-            combined_text += text + "\n\n"
-            
-        # 2. Fetch Twitter Data
-        twitter_text = await self.scrape_twitter_sentiment(ticker)
-        if twitter_text:
-            combined_text += "\n--- TWITTER SENTIMENT ---\n" + twitter_text
-            
-        # 3. Secure DevOps Anti-Ban Logic
-        delay = random.uniform(2.5, 6.5)
-        print(f"🛡️ [Anti-Ban] Sleeping for {round(delay, 1)}s to mimic human browsing...")
+        # Anti-Ban Jitter and API Quota Management
+        delay = random.uniform(1.5, 3.5)
         await asyncio.sleep(delay)
             
-        # 4. Final Agent Assessment
+        # Final Agent Assessment
         signal, score = await self.analyze_sentiment(ticker, combined_text)
-        print(f"🤖 [AI REPORT] {ticker}: {signal} (Conviction: {score}/10)")
+        print(f"🤖 [AI CRYPTO REPORT] {ticker}: {signal} (Conviction: {score}/10)")
         return signal, score
 
 if __name__ == "__main__":
     hub = MarketIntelligenceHub()
-    # Test Run on TSLA
-    asyncio.run(hub.run_full_scan("TSLA"))
+    # Test Run on BTC
+    asyncio.run(hub.run_full_scan("BTC"))

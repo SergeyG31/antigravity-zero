@@ -60,11 +60,13 @@ class TradingIntelligence:
             self.hub = MarketIntelligenceHub()
 
         async def background_recon(self):
-            """Periodically scans top stocks to warm up the sentiment cache."""
-            from config import STOCK_PAIRS
+            """Periodically scans top coins to warm up the sentiment cache."""
+            from config import CRYPTO_PAIRS
             while True:
-                for symbol in list(STOCK_PAIRS.values()):
-                    await self.hub.run_full_scan(symbol)
+                for symbol in list(CRYPTO_PAIRS):
+                    # Extract base symbol for news (e.g. BTC from BTC/USDT)
+                    base = symbol.split('/')[0]
+                    await self.hub.run_full_scan(base)
                     # Random Jitter (60-120 seconds) - Strict Additive Guard
                     import random
                     await asyncio.sleep(random.uniform(60, 120))

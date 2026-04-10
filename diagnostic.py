@@ -1,50 +1,43 @@
-import asyncio
 import os
-from dotenv import load_dotenv
-import google.generativeai as genai
+import asyncio
 import ccxt.pro as ccxt
+from dotenv import load_dotenv
 
 async def run_diagnostic():
     load_dotenv()
-    print("🧪 [DIAGNOSTIC] Starting System Health Check...")
+    print("🔍 Starting LiorBot MEXC Diagnostic...")
     
-    # 1. Check Gemini
-    gemini_key = os.getenv('GEMINI_API_KEY')
-    if gemini_key:
-        try:
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-3-flash-preview')
-            response = model.generate_content("Health check: Reply with 'OK'")
-            print(f"✅ [GEMINI AI] Connected. Response: {response.text.strip()}")
-        except Exception as e:
-            print(f"❌ [GEMINI AI] Failed: {e}")
-    else:
-        print("❌ [GEMINI AI] Missing API Key in .env")
+    api_key = os.getenv('MEXC_API_KEY')
+    api_secret = os.getenv('MEXC_API_SECRET')
+    
+    if not api_key or not api_secret:
+        print("❌ ERROR: MEXC API Keys missing in .env file!")
+        return
 
-    # 2. Check MEXC
-    mexc_key = os.getenv('MEXC_API_KEY')
-    mexc_secret = os.getenv('MEXC_API_SECRET')
-    if mexc_key and mexc_secret:
-        try:
-            mexc = ccxt.mexc({
-                'apiKey': mexc_key,
-                'secret': mexc_secret,
-            })
-            balance = await mexc.fetch_balance()
-            usdt_bal = balance.get('USDT', {}).get('free', 0.0)
-            print(f"✅ [MEXC EXCHANGE] Connected. USDT Balance: {usdt_bal}")
-            await mexc.close()
-        except Exception as e:
-            print(f"❌ [MEXC EXCHANGE] Connection Failed: {e}")
-    else:
-        print("❌ [MEXC EXCHANGE] Missing Credentials in .env")
-
-    # 3. Check Telegram
-    tg_token = os.getenv('TELEGRAM_BOT_TOKEN')
-    if tg_token:
-        print(f"✅ [TELEGRAM] Bot Token found.")
-    else:
-        print("❌ [TELEGRAM] Missing Bot Token in .env")
+    try:
+        # Initialize MEXC
+        exchange = ccxt.mexc({
+            'apiKey': api_key,
+            'secret': api_secret,
+            'enableRateLimit': True
+        })
+        
+        print(f"📡 Connecting to MEXC...")
+        balance = await exchange.fetch_balance()
+        usdt_balance = balance['total'].get('USDT', 0)
+        
+        print(f"✅ Connection Successful!")
+        print(f"💰 Account Balance: {usdt_balance} USDT")
+        
+        if usdt_balance < 10:
+            print("⚠️ Warning: Balance is low. Minimum trade is $10.")
+        else:
+            print("🚀 Bot is authorized and ready to trade!")
+            
+        await exchange.close()
+        
+    except Exception as e:
+        print(f"❌ Connection Failed: {e}")
 
 if __name__ == "__main__":
     asyncio.run(run_diagnostic())

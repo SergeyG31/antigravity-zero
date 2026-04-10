@@ -39,7 +39,7 @@ class MultiMarketScanner:
                 'volume': sum([b[1] for b in book['bids'][:5]]) 
             }
         except Exception as e:
-            # print(f"[{name}] Scan Failure: {e}")
+            print(f"[{name}] Scan Failure: {e}")
             return {'name': name, 'bid': 0.0, 'ask': 0.0, 'volume': 0.0}
 
     def find_cross_arb(self, depths=None):
