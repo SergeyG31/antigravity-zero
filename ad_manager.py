@@ -1,5 +1,7 @@
 import asyncio
 import time
+import json
+import os
 from config import CRYPTO_PAIRS, MOMENTUM_THRESHOLD, EXIT_PROFIT_TARGET, MAX_TRADE_SIZE, TARGET_EXCHANGE, MEXC_TAKER_FEE
 from intelligence_hub import MarketIntelligenceHub
 
@@ -7,9 +9,29 @@ class ArbManager:
     def __init__(self, auth_mgr):
         self.auth_mgr = auth_mgr
         self.exchanges = self.auth_mgr.get_all_exchanges()
-        self.open_positions = {}   # Tracks {symbol: entry_price}
-        self.price_history = {}    # Tracks {symbol: previous_price}
-        self.intel_hub = MarketIntelligenceHub() # AI Intelligence engine
+        self.positions_file = 'active_positions.json'
+        self.open_positions = self.load_positions() 
+        self.price_history = {}    
+        self.intel_hub = MarketIntelligenceHub()
+
+    def load_positions(self):
+        """Loads open trades from disk to handle restarts."""
+        if os.path.exists(self.positions_file):
+            try:
+                with open(self.positions_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def save_positions(self):
+        """Saves current open trades to disk."""
+        try:
+            with open(self.positions_file, 'w') as f:
+                json.dump(self.open_positions, f)
+        except Exception as e:
+            print(f"❌ Failed to save positions: {e}")
+
 
     def calculate_net_profit(self, entry_price, current_price):
         """Calculates true NET profit after double Exchange Taker fees."""
@@ -62,6 +84,7 @@ class ArbManager:
                                 success = await self.execute_trade(symbol, 'BUY', current_price)
                                 if success:
                                     self.open_positions[symbol] = current_price
+                                    self.save_positions()
                         elif signal == "NO_DATA" and momentum >= (MOMENTUM_THRESHOLD * 3):
                             # Special case: If news API is down but momentum is HUGE (3x threshold), enter anyway
                             print(f"⚡ [MOMENTUM FALLBACK] No news data, but price jump is massive! Entering...")
@@ -69,6 +92,7 @@ class ArbManager:
                                 success = await self.execute_trade(symbol, 'BUY', current_price)
                                 if success:
                                     self.open_positions[symbol] = current_price
+                                    self.save_positions()
                         else:
                             print(f"⏳ [STANDBY] {symbol} rejected by AI or Score too low.")
             
@@ -85,6 +109,7 @@ class ArbManager:
                     success = await self.execute_trade(symbol, 'SELL', current_bid)
                     if success:
                         del self.open_positions[symbol]
+                        self.save_positions() # Persist to disk
 
     async def execute_trade(self, symbol, side, price):
         """Executes market orders on MEXC with Shadow Mode Guard and Telegram Alert."""
