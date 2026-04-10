@@ -54,11 +54,23 @@ class ArbManager:
                         base_ticker = symbol.split('/')[0]
                         signal, score = await self.intel_hub.run_full_scan(base_ticker)
                         
+                        # LOG THE RESULT ALWAYS (So the user knows why it didn't buy)
+                        print(f"🤖 [AI DECISION] {symbol}: Signal={signal}, Score={score}/10")
+                        
                         if signal == "BULLISH" and score >= MIN_AI_SCORE:
                             if await self.check_liquidity(symbol, MAX_TRADE_SIZE):
                                 success = await self.execute_trade(symbol, 'BUY', current_price)
                                 if success:
                                     self.open_positions[symbol] = current_price
+                        elif signal == "NO_DATA" and momentum >= (MOMENTUM_THRESHOLD * 3):
+                            # Special case: If news API is down but momentum is HUGE (3x threshold), enter anyway
+                            print(f"⚡ [MOMENTUM FALLBACK] No news data, but price jump is massive! Entering...")
+                            if await self.check_liquidity(symbol, MAX_TRADE_SIZE):
+                                success = await self.execute_trade(symbol, 'BUY', current_price)
+                                if success:
+                                    self.open_positions[symbol] = current_price
+                        else:
+                            print(f"⏳ [STANDBY] {symbol} rejected by AI or Score too low.")
             
             # --- 2. EXIT LOGIC ---
             else:
@@ -104,21 +116,27 @@ class ArbManager:
         # In Live, we call the CCXT create_order here
         try:
             mexc = self.exchanges['mexc']
+            # Calculate how many tokens we get for $10
             token_amount = config.MAX_TRADE_SIZE / price
             
+            # Ensure the amount is not too small (below 1 USDT volume)
+            if (token_amount * price) < 1.0:
+                print(f"⚠️ Trade volume too small: {token_amount * price} USDT. Skipping.")
+                return False
+
             if side.upper() == 'BUY':
-                print(f"💰 Executing Live BUY: {token_amount} {symbol} @ {price}")
-                # For some exchanges, market buy takes 'cost' (USDT), for some 'amount' (Tokens).
-                # CCXT usually handles this if we use create_market_buy_order
-                await mexc.create_market_buy_order(symbol, config.MAX_TRADE_SIZE)
+                print(f"💰 Executing Live BUY: {token_amount} {symbol} (Cost: ${config.MAX_TRADE_SIZE})")
+                # CCXT MEXC market buy expects the AMOUNT of tokens, not the cost.
+                await mexc.create_market_buy_order(symbol, token_amount)
             else:
                 print(f"💰 Executing Live SELL: {token_amount} {symbol} @ {price}")
                 await mexc.create_market_sell_order(symbol, token_amount)
                 
             return True
         except Exception as e:
-            print(f"❌ EXECUTION FAILED: {e}")
-            notifier.send_message(f"❌ *TRADE FAILURE*: {symbol} {side} - {e}")
+            error_msg = str(e).replace('_', ' ').replace('*', ' ') # Clean for Telegram
+            print(f"❌ EXECUTION FAILED: {error_msg}")
+            notifier.send_message(f"❌ *TRADE FAILURE*: {symbol} {side}\n{error_msg}")
             return False
 
 # Alias for compatibility with dashboard_hud.py

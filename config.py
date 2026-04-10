@@ -24,7 +24,7 @@ MAX_CONCURRENT_TRADES = 5
 MEXC_TAKER_FEE = 0.001       # 0.1%
 
 # AI Confirmation (Aggressive)
-MIN_AI_SCORE = 6             
+MIN_AI_SCORE = 5             
 SCAN_TIMEOUT = 5             # 5 seconds scan frequency
 
 # --- API Keys (Stored in .env) ---
