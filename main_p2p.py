@@ -1,11 +1,10 @@
 import asyncio
 import os
-import subprocess
 import time
 from auth_manager import AuthManager
 from scraper_engine import ScraperEngine
 from ad_manager import ArbManager
-from config import EXCHANGES, CRYPTO_PAIRS
+from config import EXCHANGES, CRYPTO_PAIRS, SCAN_TIMEOUT
 
 class SmartCryptoOrchestrator:
     def __init__(self):
@@ -49,7 +48,6 @@ class SmartCryptoOrchestrator:
             # Execute Smart Crypto logic
             await self.arb_mgr.run_crypto_smart_logic(price_hub)
 
-            from config import SCAN_TIMEOUT
             await asyncio.sleep(SCAN_TIMEOUT)
 
     async def run_intelligence_learning(self):
@@ -69,7 +67,7 @@ class SmartCryptoOrchestrator:
         
         from telegram_notifier import TelegramNotifier
         notifier = TelegramNotifier()
-        notifier.send_message(f"🚀 *Smart Crypto Agent*: ONLINE.\nAnalyzing {len(CRYPTO_PAIRS)} pairs on Binance/MEXC.")
+        notifier.send_message(f"🚀 *LiorBot Antigravity*: ONLINE.\nMonitoring {', '.join(CRYPTO_PAIRS)} on MEXC.")
 
         try:
             await asyncio.gather(

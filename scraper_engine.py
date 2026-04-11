@@ -2,65 +2,64 @@ import asyncio
 import pandas as pd
 import time
 from auth_manager import AuthManager
-from config import CRYPTO_PAIRS, EXCHANGES
+from config import CRYPTO_PAIRS, EXCHANGES, TIMEFRAME
 
 class ScraperEngine:
     def __init__(self, auth_mgr: AuthManager):
         self.auth_mgr = auth_mgr
         self.exchanges = self.auth_mgr.get_all_exchanges()
-        # price_hub structure: {symbol: {exchange: {'buy': bid, 'sell': ask}}}
-        self.price_hub = {symbol: {ex: {'buy': 0.0, 'sell': 0.0} for ex in EXCHANGES} for symbol in CRYPTO_PAIRS}
+        # price_hub stores full OHLCV dataframes for each symbol
+        # format: {symbol: {exchange: pandas_df}}
+        self.price_hub = {symbol: {ex: pd.DataFrame() for ex in EXCHANGES} for symbol in (CRYPTO_PAIRS + ['BTC/USDT'])}
 
-    async def scan_market(self, exchange_id, symbol):
-        """Fetches live spot order book for a specific symbol."""
+    async def scan_ohlcv(self, exchange_id, symbol):
+        """Fetches last 50 candles (1m) to calculate indicators."""
         exchange = self.exchanges.get(exchange_id)
-        if not exchange: return 0.0, 0.0
-        
+        if not exchange:
+            return pd.DataFrame()
         try:
-            # High speed fetch
-            orderbook = await exchange.fetch_order_book(symbol, 5)
-            bid = orderbook['bids'][0][0] if orderbook['bids'] else 0.0
-            ask = orderbook['asks'][0][0] if orderbook['asks'] else 0.0
-            return bid, ask
+            # Fetch for strategic indicators
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=50)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            return df
         except Exception:
-            return 0.0, 0.0
+            return pd.DataFrame()
 
     async def refresh_all_prices(self):
-        """Monitors Crypto prices across Binance and MEXC."""
-        tasks = []
-        for symbol in CRYPTO_PAIRS:
-            for ex in EXCHANGES:
-                tasks.append(self.wrap_scan(ex, symbol))
+        """Strategic Scraper: Fetches candle data for all pairs."""
+        all_symbols = list(set(CRYPTO_PAIRS + ['BTC/USDT']))
         
+        tasks = [self.scan_ohlcv(ex, symbol) for symbol in all_symbols for ex in EXCHANGES]
         results = await asyncio.gather(*tasks)
-        
-        # Process results into hub
+
         idx = 0
-        for symbol in CRYPTO_PAIRS:
+        for symbol in all_symbols:
             for ex in EXCHANGES:
-                self.price_hub[symbol][ex]['buy'] = results[idx][0]
-                self.price_hub[symbol][ex]['sell'] = results[idx][1]
+                self.price_hub[symbol][ex] = results[idx]
                 idx += 1
-        
+
         return self.price_hub
 
-
-    async def wrap_scan(self, ex, symbol):
-        return await self.scan_market(ex, symbol)
+    def get_latest_price(self, symbol, exchange_id):
+        """Helper to get only the last close price."""
+        df = self.price_hub.get(symbol, {}).get(exchange_id, pd.DataFrame())
+        if not df.empty:
+            return df['close'].iloc[-1]
+        return 0.0
 
     def calculate_spread_matrix(self):
-        """Builds a comparison matrix for the dashboard UI."""
-        if not self.price_hub: return pd.DataFrame()
-        
+        """Compatibility method for dashboard UI."""
         matrix = []
         for symbol, exs in self.price_hub.items():
-            for ex_name, prices in exs.items():
+            for ex_name, df in exs.items():
+                if df.empty: continue
+                last = df.iloc[-1]
                 matrix.append({
                     "Symbol": symbol,
                     "Exchange": ex_name.upper(),
-                    "Bid (Buy)": prices['buy'],
-                    "Ask (Sell)": prices['sell'],
-                    "Spread %": round(((prices['sell'] - prices['buy']) / prices['buy'] * 100), 2) if prices['buy'] > 0 else 0
+                    "Bid (Buy)": last['close'], # Proxied for UI
+                    "Ask (Sell)": last['close'],
+                    "Spread %": 0.0
                 })
         return pd.DataFrame(matrix)
-
