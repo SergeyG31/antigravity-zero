@@ -23,6 +23,7 @@ MEXC_TAKER_FEE = 0.001
 MIN_AI_SCORE = 5             
 SCAN_TIMEOUT = 5             
 GLOBAL_MARKET_GUARD = True   # AI Crash Detection
+INTELLIGENCE_RECON_INTERVAL = 60 # Check news every 60s
 
 # --- API Keys (Stored in .env) ---
 MEXC_API_KEY = os.getenv('MEXC_API_KEY', '')

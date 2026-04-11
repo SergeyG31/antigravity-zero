@@ -61,9 +61,12 @@ class ArbManager:
         base_ticker = symbol.split('/')[0]
         signal, score = await self.intel_hub.run_full_scan(base_ticker)
         
-        if signal == "BEARISH" or score < MIN_AI_SCORE:
-            print(f"⚠️ [AI VETO] {symbol} failed post-buy check. Flagging for exit.")
+        # VETO only if it's truly dangerous (Bearish or VERY low score)
+        if signal == "BEARISH" or score < 3:
+            print(f"⚠️ [AI VETO] {symbol} confirmed danger (Signal: {signal}, Score: {score}/10). Closing...")
             self.open_positions[f"{symbol}_veto"] = True
+        else:
+            print(f"✅ [AI PASSED] {symbol} is safe to hold (Signal: {signal}, Score: {score}/10).")
             
     async def liquidate_everything(self):
         """Emergency method to sell all open positions recorded in memory."""
