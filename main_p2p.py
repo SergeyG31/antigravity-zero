@@ -16,7 +16,31 @@ class SmartCryptoOrchestrator:
 
     async def run_arb_loop(self):
         """Smart Crypto Specialist Loop (MEXC ONLY)."""
+        from telegram_notifier import TelegramNotifier
+        notifier = TelegramNotifier()
+        last_heartbeat = time.time()
+        
         while self.running:
+            # 1. EMERGENCY KILL-SWITCH
+            if os.getenv('EMERGENCY_EXIT') == 'True' or os.path.exists('EMERGENCY_STOP'):
+                print("🛑 EMERGENCY STOP DETECTED! Shutting down...")
+                notifier.send_message("🚨 *EMERGENCY SHUTDOWN*: LiorBot is stopping now.")
+                self.running = False
+                break
+
+            # 2. HEARTBEAT (Every Hour)
+            if time.time() - last_heartbeat >= 3600:
+                try:
+                    mexc = self.auth_mgr.get_all_exchanges()['mexc']
+                    bal = await mexc.fetch_balance()
+                    usdt = bal['total'].get('USDT', 0)
+                    open_count = len(self.arb_mgr.open_positions)
+                    msg = f"💓 *LiorBot Heartbeat*\nBalance: {round(usdt, 2)} USDT\nActive Positions: {open_count}"
+                    notifier.send_message(msg)
+                    last_heartbeat = time.time()
+                except Exception as e:
+                    print(f"Heartbeat Error: {e}")
+
             print(f"[{time.strftime('%H:%M:%S')}] Monitoring {len(CRYPTO_PAIRS)} Crypto Pairs on MEXC...")
             
             # Refresh all crypto prices

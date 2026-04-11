@@ -9,23 +9,20 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 # --- HYPER-AGGRESSIVE MODE (MEXC ONLY) ---
 TARGET_EXCHANGE = 'mexc'      
 CRYPTO_PAIRS = [
-    'CAKE/USDT', 'XRP/USDT', 'ADA/USDT', 
-    'SUI/USDT', 'AVAX/USDT', 'LINK/USDT', 'MYX/USDT',
-    'PEPE/USDT', 'WIF/USDT', 'BONK/USDT',
-    'DOGE/USDT', 'SHIB/USDT', 'FLOKI/USDT', 
-    'BOME/USDT', 'JUP/USDT', 'POPCAT/USDT'
+    'ADA/USDT', 'CAKE/USDT', 'SHIB/USDT'
 ]
 
-# --- Aggressive Thresholds ---
-MOMENTUM_THRESHOLD = 0.0008  # 0.08% (Ultra sensitive)
-EXIT_PROFIT_TARGET = 0.0065  # 0.65% Net (A bit higher to capture the swing)
+MOMENTUM_THRESHOLD = 0.0004  # 0.04% (Ultra High Sensitivity)
+EXIT_PROFIT_TARGET = 0.0025  # 0.25% Net
+STOP_LOSS_LIMIT = -0.035     # -3.5% (Sell to save the dollar)
 MAX_TRADE_SIZE = 10.0        
 MAX_CONCURRENT_TRADES = 5    
-MEXC_TAKER_FEE = 0.001       # 0.1%
+MEXC_TAKER_FEE = 0.001       
 
-# AI Confirmation (Aggressive)
+# AI Confirmation & Safety
 MIN_AI_SCORE = 5             
-SCAN_TIMEOUT = 5             # 5 seconds scan frequency
+SCAN_TIMEOUT = 5             
+GLOBAL_MARKET_GUARD = True   # AI Crash Detection
 
 # --- API Keys (Stored in .env) ---
 MEXC_API_KEY = os.getenv('MEXC_API_KEY', '')

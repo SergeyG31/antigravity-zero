@@ -50,66 +50,111 @@ class ArbManager:
             return False
         except Exception:
             return False
+    def formalize_amount(self, symbol, amount):
+        """Normalizes amount to exchange precision specs."""
+        mexc = self.exchanges['mexc']
+        return float(mexc.amount_to_precision(symbol, amount))
+
+    async def optimistic_ai_verify(self, symbol):
+        """Verify the trade with AI after entry. If bad, flag for veto exit."""
+        from config import MIN_AI_SCORE
+        base_ticker = symbol.split('/')[0]
+        signal, score = await self.intel_hub.run_full_scan(base_ticker)
+        
+        if signal == "BEARISH" or score < MIN_AI_SCORE:
+            print(f"⚠️ [AI VETO] {symbol} failed post-buy check. Flagging for exit.")
+            self.open_positions[f"{symbol}_veto"] = True
+            
+    async def liquidate_everything(self):
+        """Emergency method to sell all open positions recorded in memory."""
+        print("🕯️ Antigravity Ritual: Liquidating all assets...")
+        # Get all coin keys (ignoring peak/veto keys)
+        symbols = [s for s in self.open_positions.keys() if '/' in s and not s.endswith('_peak') and not s.endswith('_veto')]
+        for symbol in symbols:
+            # We use 0 as price to trigger market fetch in execute_trade
+            await self.execute_trade(symbol, 'SELL', 0)
+            if symbol in self.open_positions: del self.open_positions[symbol]
+            # Cleanup metadata keys
+            for k in [f"{symbol}_peak", f"{symbol}_veto"]:
+                if k in self.open_positions: del self.open_positions[k]
+        self.save_positions()
 
     async def run_crypto_smart_logic(self, price_hub):
-        """Smart Crypto (MEXC ONLY): Momentum + Sentiment Logic."""
-        from config import MAX_CONCURRENT_TRADES, MIN_AI_SCORE
+        """Optimistic Hyper-Aggressive Logic: Buy on Signal, Verify in Background."""
+        from config import MAX_CONCURRENT_TRADES, CRYPTO_PAIRS, TARGET_EXCHANGE, MOMENTUM_THRESHOLD
         
         for symbol in CRYPTO_PAIRS:
             current_price = price_hub.get(symbol, {}).get(TARGET_EXCHANGE, {}).get('sell', 0.0)
             if current_price == 0: continue
             
-            # --- 1. ENTRY LOGIC: Momentum + AI Confidence ---
+            # --- 1. ENTRY LOGIC: Optimistic Buy ---
             if symbol not in self.open_positions:
                 if len(self.open_positions) >= MAX_CONCURRENT_TRADES: continue
                 
                 prev_price = self.price_history.get(symbol, 0.0)
-                self.price_history[symbol] = current_price # Update history
+                self.price_history[symbol] = current_price
                 
                 if prev_price > 0:
                     momentum = (current_price - prev_price) / prev_price
                     
-                    # If price is moving up, verify with AI
                     if momentum >= MOMENTUM_THRESHOLD:
-                        print(f"📈 [HYPER] {symbol} Up {round(momentum*100, 3)}%. Verifying...")
-                        
-                        base_ticker = symbol.split('/')[0]
-                        signal, score = await self.intel_hub.run_full_scan(base_ticker)
-                        
-                        # LOG THE RESULT ALWAYS (So the user knows why it didn't buy)
-                        print(f"🤖 [AI DECISION] {symbol}: Signal={signal}, Score={score}/10")
-                        
-                        if signal == "BULLISH" and score >= MIN_AI_SCORE:
-                            if await self.check_liquidity(symbol, MAX_TRADE_SIZE):
-                                success = await self.execute_trade(symbol, 'BUY', current_price)
-                                if success:
-                                    self.open_positions[symbol] = current_price
-                                    self.save_positions()
-                        elif signal == "NO_DATA" and momentum >= (MOMENTUM_THRESHOLD * 3):
-                            # Special case: If news API is down but momentum is HUGE (3x threshold), enter anyway
-                            print(f"⚡ [MOMENTUM FALLBACK] No news data, but price jump is massive! Entering...")
-                            if await self.check_liquidity(symbol, MAX_TRADE_SIZE):
-                                success = await self.execute_trade(symbol, 'BUY', current_price)
-                                if success:
-                                    self.open_positions[symbol] = current_price
-                                    self.save_positions()
-                        else:
-                            print(f"⏳ [STANDBY] {symbol} rejected by AI or Score too low.")
+                        print(f"🚀 [OPTIMISTIC BUY] {symbol} Up {round(momentum*100, 4)}%. Executing...")
+                        success = await self.execute_trade(symbol, 'BUY', current_price)
+                        if success:
+                            self.open_positions[symbol] = current_price
+                            self.save_positions()
+                            # Verify in background
+                            asyncio.create_task(self.optimistic_ai_verify(symbol))
             
-            # --- 2. EXIT LOGIC ---
+            # --- 2. EXIT LOGIC (Trailing + SL + AI Veto) ---
             else:
-                entry_price = self.open_positions[symbol]
+                from config import STOP_LOSS_LIMIT, EXIT_PROFIT_TARGET
+                entry_data = self.open_positions[symbol]
+                # Entry price is just the value
+                entry_price = entry_data
+                
                 current_bid = price_hub.get(symbol, {}).get(TARGET_EXCHANGE, {}).get('buy', 0.0)
                 if current_bid == 0: continue
                 
                 net_profit = self.calculate_net_profit(entry_price, current_bid)
                 
-                if net_profit >= EXIT_PROFIT_TARGET:
-                    print(f"💰 [MEXC PROFIT] Closing {symbol} | Net: {round(net_profit*100, 2)}%")
+                # A. STOP LOSS or AI VETO
+                veto_key = f"{symbol}_veto"
+                should_emergency_exit = net_profit <= STOP_LOSS_LIMIT or veto_key in self.open_positions
+                
+                if should_emergency_exit:
+                    reason = "STOP LOSS" if net_profit <= STOP_LOSS_LIMIT else "AI VETO"
+                    print(f"🚨 [{reason}] Closing {symbol} (PnL: {round(net_profit*100, 2)}%).")
                     success = await self.execute_trade(symbol, 'SELL', current_bid)
                     if success:
                         del self.open_positions[symbol]
-                        self.save_positions() # Persist to disk
+                        if veto_key in self.open_positions: del self.open_positions[veto_key]
+                        self.save_positions()
+                    continue
+
+                # B. TRAILING TAKE PROFIT: Ride the wave
+                if net_profit >= EXIT_PROFIT_TARGET:
+                    # Store the highest price seen since hitting target
+                    peak_key = f"{symbol}_peak"
+                    if peak_key not in self.open_positions:
+                        self.open_positions[peak_key] = current_bid
+                    
+                    peak_price = max(self.open_positions[peak_key], current_bid)
+                    self.open_positions[peak_key] = peak_price
+                    
+                    # If price drops 0.05% from the peak, or we just want to lock in 
+                    # a very high profit, we sell.
+                    drop_from_peak = (peak_price - current_bid) / peak_price
+                    
+                    if drop_from_peak >= 0.0005: # 0.05% drop from peak
+                        print(f"💰 [TAKE PROFIT] {symbol} Peak: {peak_price} | Current: {current_bid} | Net: {round(net_profit*100, 2)}%")
+                        success = await self.execute_trade(symbol, 'SELL', current_bid)
+                        if success:
+                            del self.open_positions[symbol]
+                            if peak_key in self.open_positions: del self.open_positions[peak_key]
+                            self.save_positions()
+                    else:
+                        print(f"🌊 [RIDING WAVE] {symbol} at {round(net_profit*100, 2)}%. Peak: {peak_price}. Waiting for higher...")
 
     async def execute_trade(self, symbol, side, price):
         """Executes market orders on MEXC with Shadow Mode Guard and Telegram Alert."""
@@ -150,12 +195,28 @@ class ArbManager:
                 return False
 
             if side.upper() == 'BUY':
+                token_amount = self.formalize_amount(symbol, token_amount)
                 print(f"💰 Executing Live BUY: {token_amount} {symbol} (Cost: ${config.MAX_TRADE_SIZE})")
-                # CCXT MEXC market buy expects the AMOUNT of tokens, not the cost.
                 await mexc.create_market_buy_order(symbol, token_amount)
             else:
-                print(f"💰 Executing Live SELL: {token_amount} {symbol} @ {price}")
-                await mexc.create_market_sell_order(symbol, token_amount)
+                # For SELL: Fetch actual balance to avoid 'Oversold' errors
+                base_asset = symbol.split('/')[0]
+                balance = await mexc.fetch_balance()
+                actual_amount = balance['total'].get(base_asset, 0)
+                
+                if actual_amount > 0:
+                    token_amount = self.formalize_amount(symbol, actual_amount)
+                    print(f"💰 Executing Live SELL: {token_amount} {symbol} (Full Balance)")
+                    await mexc.create_market_sell_order(symbol, token_amount)
+                else:
+                    print(f"⚠️ No balance found for {base_asset}. Removing phantom position from memory.")
+                    if symbol in self.open_positions:
+                        del self.open_positions[symbol]
+                        # Also clean up potential peak keys
+                        peak_key = f"{symbol}_peak"
+                        if peak_key in self.open_positions: del self.open_positions[peak_key]
+                        self.save_positions()
+                    return False
                 
             return True
         except Exception as e:
